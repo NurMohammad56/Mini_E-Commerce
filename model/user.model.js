@@ -76,11 +76,6 @@ const userSchema = new Schema(
     otp: {
       hash: { type: String, default: "" },
       expiresAt: { type: Date, default: null },
-      purpose: {
-        type: String,
-        enum: ["verify_email", "reset_password"],
-        default: null,
-      },
       attempts: { type: Number, default: 0 },
       lastSentAt: { type: Date, default: null },
     },

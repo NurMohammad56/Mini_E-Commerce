@@ -286,7 +286,6 @@ export const forgetPassword = catchAsync(async (req, res, next) => {
   user.otp = {
     hash: hashOTP(rawOtp),
     expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 min
-    purpose: "reset_password",
     attempts: 0,
     lastSentAt: new Date(),
   };
@@ -321,11 +320,7 @@ export const resetPassword = catchAsync(async (req, res, next) => {
   const user = await User.findOne({ email }).select("+password");
   if (!user) return next(new AppError(404, "User not found"));
 
-  if (
-    !user.otp?.hash ||
-    user.otp.purpose !== "reset_password" ||
-    isOtpExpired(user.otp.expiresAt)
-  ) {
+  if (!user.otp?.hash || isOtpExpired(user.otp.expiresAt)) {
     return next(new AppError(400, "OTP is invalid or expired"));
   }
 
@@ -346,7 +341,6 @@ export const resetPassword = catchAsync(async (req, res, next) => {
   user.otp = {
     hash: "",
     expiresAt: null,
-    purpose: null,
     attempts: 0,
     lastSentAt: null,
   };
@@ -362,20 +356,16 @@ export const resetPassword = catchAsync(async (req, res, next) => {
 });
 
 export const verifyOTP = catchAsync(async (req, res, next) => {
-  const { email, otp, purpose } = req.body;
+  const { email, otp } = req.body;
 
-  if (!email || !otp || !purpose) {
-    return next(new AppError(400, "Email, OTP and purpose are required"));
+  if (!email || !otp) {
+    return next(new AppError(400, "Email, OTP and are required"));
   }
 
   const user = await User.findOne({ email });
   if (!user) return next(new AppError(404, "User not found"));
 
-  if (
-    !user.otp?.hash ||
-    user.otp.purpose !== purpose ||
-    isOtpExpired(user.otp.expiresAt)
-  ) {
+  if (!user.otp?.hash || isOtpExpired(user.otp.expiresAt)) {
     return next(new AppError(400, "Invalid or expired OTP"));
   }
 
@@ -391,19 +381,14 @@ export const verifyOTP = catchAsync(async (req, res, next) => {
     return next(new AppError(400, "Invalid OTP"));
   }
 
-  if (purpose === "verify_email") {
-    user.isEmailVerified = true;
-  }
+  user.isEmailVerified = true;
 
   await user.save();
 
   sendResponse(res, {
     statusCode: 200,
     success: true,
-    message:
-      purpose === "verify_email"
-        ? "Email verified successfully"
-        : "OTP verified successfully",
+    message: "OTP verified successfully",
     data: { email },
   });
 });
