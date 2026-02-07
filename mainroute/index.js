@@ -13,6 +13,9 @@ import couponRoute from "../route/coupon.route.js";
 import contactUsRoute from "../route/contactUs.route.js";
 import reviewsRoute from "../route/review.route.js";
 import bannerRoutes from "../route/banner.route.js";
+import subscriptionRoute from "../route/subcription.route.js";
+import adminDashboardRoute from "../route/admin.route.js";
+import sellerDashboardRoute from "../route/seller.route.js";
 
 const router = express.Router();
 
@@ -30,5 +33,8 @@ router.use("/coupon", couponRoute);
 router.use("/contact-us", contactUsRoute);
 router.use("/reviews", reviewsRoute);
 router.use("/banner", bannerRoutes);
+router.use("/subscription", subscriptionRoute);
+router.use("/admin/dashboard", adminDashboardRoute);
+router.use("/seller/dashboard", sellerDashboardRoute);
 
 export default router;

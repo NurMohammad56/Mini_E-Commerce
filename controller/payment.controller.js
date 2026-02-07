@@ -1,5 +1,6 @@
 import { Order } from "../model/order.model.js";
 import { paymentInfo } from "../model/payment.model.js";
+import { Subscription } from "../model/subscription.model.js";
 import { User } from "../model/user.model.js";
 import Stripe from "stripe";
 
@@ -7,27 +8,75 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2022-11-15",
 });
 
-export const createPayment = async (req, res) => {
-  const { userId, price, orderId } = req.body;
+// Admin commission rate - 4.99%
+const ADMIN_COMMISSION_RATE = 0.0499;
 
-  if (!price) {
-    return res.status(400).json({ error: "amount is required." });
+export const createPayment = async (req, res) => {
+  const { userId, price, orderId, subscriptionId, type, billingPeriod } =
+    req.body;
+
+  if (!price || !type) {
+    return res.status(400).json({ error: "Price and type are required." });
+  }
+
+  // Validate type-specific requirements
+  if (type === "order" && !orderId) {
+    return res
+      .status(400)
+      .json({ error: "Order ID is required for order payments." });
+  }
+
+  if (type === "subscription" && (!subscriptionId || !billingPeriod)) {
+    return res.status(400).json({
+      error:
+        "Subscription ID and billing period are required for subscription payments.",
+    });
   }
 
   try {
+    // For subscription payments, verify the subscription exists
+    if (type === "subscription") {
+      const subscription = await Subscription.findById(subscriptionId);
+      if (!subscription) {
+        return res.status(404).json({ error: "Subscription plan not found." });
+      }
+
+      // Verify price matches the selected billing period
+      const expectedPrice =
+        billingPeriod === "yearly"
+          ? subscription.pricePerYear
+          : subscription.pricePerMonth;
+      if (Math.abs(price - expectedPrice) > 0.01) {
+        return res
+          .status(400)
+          .json({ error: "Price mismatch with subscription plan." });
+      }
+    }
+
+    // Create metadata based on payment type
+    const metadata = { userId, type };
+    if (orderId) metadata.orderId = orderId;
+    if (subscriptionId) {
+      metadata.subscriptionId = subscriptionId;
+      metadata.billingPeriod = billingPeriod;
+    }
+
     const paymentIntent = await stripe.paymentIntents.create({
       amount: Math.round(price * 100),
       currency: "usd",
       automatic_payment_methods: { enabled: true },
-      metadata: { userId, orderId },
+      metadata,
     });
 
     await paymentInfo.create({
       userId,
-      orderId,
+      orderId: orderId || null,
+      subscriptionId: subscriptionId || null,
       price,
       transactionId: paymentIntent.id,
       paymentStatus: "pending",
+      type,
+      billingPeriod: billingPeriod || null,
     });
 
     res.status(200).json({
@@ -71,26 +120,64 @@ export const confirmPayment = async (req, res) => {
     }
 
     // Update database
-    const paymentRecord = await paymentInfo.findOneAndUpdate(
+    const paymentRecord = await paymentInfo.findOne({
+      transactionId: paymentIntentId,
+    });
+
+    if (!paymentRecord) {
+      return res.status(404).json({ error: "Payment record not found" });
+    }
+
+    // Calculate admin commission for order payments
+    let adminCommission = 0;
+    if (paymentRecord.type === "order") {
+      adminCommission = paymentRecord.price * ADMIN_COMMISSION_RATE;
+    }
+
+    // Update payment record
+    await paymentInfo.findOneAndUpdate(
       { transactionId: paymentIntentId },
-      { paymentStatus: "complete" },
+      {
+        paymentStatus: "complete",
+        adminCommission,
+      },
       { new: true },
     );
 
-    if (paymentRecord?.orderId) {
+    // Handle order payment
+    if (paymentRecord.orderId) {
       const order = await Order.findById(paymentRecord.orderId).populate(
-        "product user seller",
+        "items.product customer vendor",
       );
 
-      await Order.findByIdAndUpdate(paymentRecord.orderId, {
-        paymentStatus: "paid",
-      });
+      if (order) {
+        await Order.findByIdAndUpdate(paymentRecord.orderId, {
+          paymentStatus: "paid",
+        });
+      }
+    }
+
+    // Handle subscription payment
+    if (paymentRecord.subscriptionId && paymentRecord.type === "subscription") {
+      const user = await User.findById(paymentRecord.userId);
+      if (user && user.role === "seller") {
+        const subscription = await Subscription.findById(
+          paymentRecord.subscriptionId,
+        );
+        if (subscription) {
+          await Subscription.findByIdAndUpdate(paymentRecord.subscriptionId, {
+            paymentStatus: "paid",
+          });
+        }
+      }
     }
 
     return res.status(200).json({
       success: true,
       message: "Payment confirmed",
       paymentIntentId,
+      type: paymentRecord.type,
+      adminCommission: adminCommission.toFixed(2),
     });
   } catch (error) {
     console.log(error);
